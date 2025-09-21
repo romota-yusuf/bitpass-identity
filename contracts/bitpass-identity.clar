@@ -124,3 +124,114 @@
     (asserts! (is-some safe-email) ERR-INVALID-EMAIL)
     (asserts! (validate-username (unwrap-panic safe-username)) ERR-INVALID-USERNAME)
     (asserts! (validate-email (unwrap-panic safe-email)) ERR-INVALID-EMAIL)
+
+    ;; Check username availability only if changing
+    (if (not (is-eq (get username (unwrap-panic current-user)) (unwrap-panic safe-username)))
+      (asserts! (is-none (map-get? taken-usernames (unwrap-panic safe-username))) ERR-USERNAME-TAKEN)
+      true
+    )
+
+    ;; Update username tracking
+    (map-delete taken-usernames (get username (unwrap-panic current-user)))
+    (map-set taken-usernames (unwrap-panic safe-username) true)
+
+    ;; Update user record
+    (map-set users caller
+      (merge (unwrap-panic current-user)
+        {
+          username: (unwrap-panic safe-username),
+          email: (unwrap-panic safe-email)
+        }
+      )
+    )
+    (ok true)
+  )
+)
+
+;; Sets or updates the user's profile image
+;; @param image-url: URL string for profile image (max 256 characters)
+;; @returns: (ok true) on success, error on failure
+(define-public (set-profile-image (image-url (string-utf8 256)))
+  (let
+    (
+      (caller tx-sender)
+      (safe-url (as-max-len? image-url u256))
+    )
+    (asserts! (is-some (map-get? users caller)) ERR-USER-NOT-FOUND)
+    (asserts! (is-some safe-url) ERR-INVALID-IMAGE-URL)
+    
+    (map-set users caller
+      (merge (unwrap-panic (map-get? users caller))
+        { profile-image: safe-url }
+      )
+    )
+    (ok true)
+  )
+)
+
+;; Removes the user's profile image
+;; @returns: (ok true) on success, error on failure
+(define-public (clear-profile-image)
+  (let
+    ((caller tx-sender))
+    (asserts! (is-some (map-get? users caller)) ERR-USER-NOT-FOUND)
+    
+    (map-set users caller
+      (merge (unwrap-panic (map-get? users caller))
+        { profile-image: none }
+      )
+    )
+    (ok true)
+  )
+)
+
+;; Permanently deletes the user's profile and frees up their username
+;; @returns: (ok true) on success, error on failure
+(define-public (delete-profile)
+  (let
+    ((caller tx-sender))
+    (asserts! (is-some (map-get? users caller)) ERR-USER-NOT-FOUND)
+    
+    ;; Remove user data and free username
+    (map-delete users caller)
+    (var-set user-count (- (var-get user-count) u1))
+    (ok true)
+  )
+)
+
+;; READ-ONLY FUNCTIONS - IDENTITY QUERIES
+
+;; Retrieves complete user information for a given principal
+;; @param user: Principal address to query
+;; @returns: User data map or none if not found
+(define-read-only (get-user-info (user principal))
+  (map-get? users user)
+)
+
+;; Returns the total number of registered users in the system
+;; @returns: Current user count as uint
+(define-read-only (get-user-count)
+  (var-get user-count)
+)
+
+;; Checks if a principal has registered an identity
+;; @param user: Principal address to check
+;; @returns: true if registered, false otherwise
+(define-read-only (is-user-registered (user principal))
+  (is-some (map-get? users user))
+)
+
+;; Checks if a username is available for registration
+;; @param username: Username to check availability for
+;; @returns: (ok true) if available, (ok false) if taken, error if invalid
+(define-read-only (is-username-available (username (string-ascii 50)))
+  (let
+    ((safe-username (as-max-len? username u50)))
+    (if (and
+          (is-some safe-username)
+          (validate-username (unwrap-panic safe-username)))
+      (ok (is-none (map-get? taken-usernames (unwrap-panic safe-username))))
+      ERR-INVALID-USERNAME
+    )
+  )
+)
